@@ -1,180 +1,312 @@
-local QBCore = exports['qb-core']:GetCoreObject()
-local SafeCodes = {}
-local cashA = 250 --<<how much minimum you can get from a robbery
-local cashB = 450 --<< how much maximum you can get from a robbery
+local safeCombos, thermiteWait, exploit = {}, {}, {} -- dont touch
 
-CreateThread(function()
-    while true do
-        SafeCodes = {
-            [1] = math.random(1000, 9999),
-            [2] = { math.random(1, 149), math.random(500.0, 600.0), math.random(360.0, 400), math.random(600.0, 900.0) },
-            [3] = { math.random(150, 359), math.random(-300.0, -60.0), math.random(0, 100), math.random(-500.0, -160.0) },
-            [4] = math.random(1000, 9999),
-            [5] = math.random(1000, 9999),
-            [6] = { math.random(1, 149), math.random(150.0, 200.0), math.random(100, 140), math.random(150.0, 220.0), math.random(-100, 100), math.random(140, 300) },
-            [7] = math.random(1000, 9999),
-            [8] = math.random(1000, 9999),
-            [9] = math.random(1000, 9999),
-            [10] = { math.random(1, 149), math.random(300.0, 500.0), math.random(200, 260), math.random(500.0, 800.0), math.random(300, 440), math.random(650, 900) },
-            [11] = math.random(1000, 9999),
-            [12] = math.random(1000, 9999),
-            [13] = math.random(1000, 9999),
-            [14] = { math.random(150, 450), math.random(-360.0, 0.0), math.random(360, 720) },
-            [15] = math.random(1000, 9999),
-            [16] = math.random(1000, 9999),
-            [17] = math.random(1000, 9999),
-            [18] = { math.random(150, 450), math.random(1.0, 100.0), math.random(360, 450), math.random(300.0, 340.0), math.random(350, 400), math.random(320.0, 340.0), math.random(350, 600) },
-            [19] = math.random(1000, 9999),
-        }
-        Wait((1000 * 60) * 40)
+local function coolDown(type, index, time)
+    if type == 'combo' then
+       CreateThread(function()
+            Wait(time)
+            safeCombos[index] = nil
+        end)
     end
-end)
-
-RegisterNetEvent('qb-storerobbery:server:takeMoney', function(register, isDone)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    local playerPed = GetPlayerPed(src)
-    local playerCoords = GetEntityCoords(playerPed)
-    if #(playerCoords - Config.Registers[register][1].xyz) > 3.0 or (not Config.Registers[register].robbed and not isDone) or (Config.Registers[register].time <= 0 and not isDone) then
-        return DropPlayer(src, 'Attempted exploit abuse')
+    if type == 'robRegister' then
+        CreateThread(function()
+            Wait(time)
+            Registers[index].robbed = false
+            GlobalState.StoreRobberyRegisters = Registers
+        end)
     end
-    if isDone then
-        local bags = math.random(1, 3)
-        local info = {
-            worth = math.random(cashA, cashB)
-        }
-        exports['qb-inventory']:AddItem(src, 'markedbills', bags, false, info, 'qb-storerobbery:server:takeMoney')
-        TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['markedbills'], 'add')
-        if math.random(1, 100) <= Config.stickyNoteChance then
-            local code = SafeCodes[Config.Registers[register].safeKey]
-            if Config.Safes[Config.Registers[register].safeKey].type == 'keypad' then
-                info = {
-                    label = Lang:t('text.safe_code') .. tostring(code)
-                }
-            else
-                local label = Lang:t('text.safe_code') .. ' '
-
-                for i = 1, #code do
-                    label = label .. tostring(math.floor((code[i] % 360) / 3.60)) .. ' - '
-                end
-
-                info = { label = label:sub(1, -3) }
+    if type == 'robSafe' then
+        CreateThread(function()
+            Wait(time)
+            Safes[index].robbed = false
+            GlobalState.StoreRobberySafes = Safes
+        end)
+    end
+    if type == 'thermiteCooldown' then
+        if thermiteWait[index] then
+            return false
+        end
+        thermiteWait[index] = true
+        CreateThread(function()
+            Wait(time - 1000)
+            thermiteWait[index] = nil
+        end)
+    end
+    if type == 'resetThermite' then
+        CreateThread(function()
+            Wait(time)
+            if not Safes[index].thermited then
+                Safes[index].thermited = false
+                GlobalState.StoreRobberySafes = Safes
             end
-            exports['qb-inventory']:AddItem(src, 'stickynote', 1, false, info, 'qb-storerobbery:server:takeMoney')
-            TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['stickynote'], 'add')
-        end
+        end)
     end
-end)
+end
 
-RegisterNetEvent('qb-storerobbery:server:setRegisterStatus', function(register)
-    Config.Registers[register].robbed = true
-    Config.Registers[register].time = Config.resetTime
-    TriggerClientEvent('qb-storerobbery:client:setRegisterStatus', -1, register, Config.Registers[register])
-end)
-
-RegisterNetEvent('qb-storerobbery:server:setSafeStatus', function(safe)
-    Config.Safes[safe].robbed = true
-    TriggerClientEvent('qb-storerobbery:client:setSafeStatus', -1, safe, true)
-
-    SetTimeout(math.random(40, 80) * (60 * 1000), function()
-        Config.Safes[safe].robbed = false
-        TriggerClientEvent('qb-storerobbery:client:setSafeStatus', -1, safe, false)
-    end)
-end)
-
-RegisterNetEvent('qb-storerobbery:server:SafeReward', function(safe)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    local playerPed = GetPlayerPed(src)
-    local playerCoords = GetEntityCoords(playerPed)
-    if #(playerCoords - Config.Safes[safe][1].xyz) > 3.0 or Config.Safes[safe].robbed then
-        return DropPlayer(src, 'Attempted exploit abuse')
-    end
-    local bags = math.random(1, 3)
-    local info = {
-        worth = math.random(cashA, cashB)
-    }
-    exports['qb-inventory']:AddItem(src, 'markedbills', bags, false, info, 'qb-storerobbery:server:SafeReward')
-    TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['markedbills'], 'add')
-    local luck = math.random(1, 100)
-    local odd = math.random(1, 100)
-    if luck <= 10 then
-        exports['qb-inventory']:AddItem(src, 'rolex', math.random(3, 7), false, false, 'qb-storerobbery:server:SafeReward')
-        TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['rolex'], 'add')
-        if luck == odd then
-            Wait(500)
-            exports['qb-inventory']:AddItem(src, 'goldbar', 1, false, false, 'qb-storerobbery:server:SafeReward')
-            TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['goldbar'], 'add')
-        end
-    end
-end)
-
-RegisterNetEvent('qb-storerobbery:server:callCops', function(type, safe, streetLabel, coords)
-    local cameraId
-    if type == 'safe' then
-        cameraId = Config.Safes[safe].camId
+local function checkDistance(src, location, distance)
+    local ped = GetPlayerPed(src)
+    local pos = GetEntityCoords(ped)
+    local dist = #(pos - vector3(location.x, location.y, location.z))
+    if dist <= distance then
+        return true
     else
-        cameraId = Config.Registers[safe].camId
+        exploit[src] = (exploit[src] and exploit[src] + 1 or 1)
+        if exploit[src] >= 5 then
+            DropPlayer(src, Lang:t('error.cheatingDetectedDrop'))
+            print(src .. Lang:t('error.cheatingDetectedPrint'))
+        end
+        return false
     end
-    local alertData = {
-        title = '10-33 | Shop Robbery',
-        coords = { x = coords.x, y = coords.y, z = coords.z },
-        description = Lang:t('email.someone_is_trying_to_rob_a_store', { street = streetLabel, cameraId1 = cameraId })
-    }
-    TriggerClientEvent('qb-storerobbery:client:robberyCall', -1, type, safe, streetLabel, coords)
-    TriggerClientEvent('qb-phone:client:addPoliceAlert', -1, alertData)
-end)
+end
 
-RegisterNetEvent('qb-storerobbery:server:removeAdvancedLockpick', function()
-    local Player = QBCore.Functions.GetPlayer(source)
+local function createCombo(index)
+    if safeCombos[index] then
+        return safeCombos[index]
+    end
+    safeCombos[index] = math.random(1000, 9999)
+    coolDown('combo', index, RegisterConfig.comboResetTime)
+    return safeCombos[index]
+end
+
+RegisterNetEvent('qb-storerobbery:server:robRegister', function(index)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    exports['qb-inventory']:RemoveItem(source, 'advancedlockpick', 1, false, 'qb-storerobbery:server:removeAdvancedLockpick')
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return
+    end
+    if not Registers[index] then
+        print(Lang:t('error.invalidRegister') .. tostring(index))
+        return
+    end
+
+    if not checkDistance(src, Registers[index].loc, 3.0) then
+        return
+    end
+
+    if Registers[index].robbed then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.alreadyRobbed'), 'error')
+        return
+    end
+
+    if RegisterConfig.comboChance <= math.random(1, 100) then
+        local combo = createCombo(Registers[index].safeKey)
+        Player.Functions.AddItem('stickynote', 1, false, { Combo = combo })
+        TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['stickynote'], "add")
+    end
+
+    Player.Functions.AddMoney('cash',  math.random(RegisterConfig.cashMin, RegisterConfig.cashMax), "store-robbery")
+
+    Registers[index].robbed = true
+    GlobalState.StoreRobberyRegisters = Registers
+    coolDown('robRegister', index, RegisterConfig.registerResetTime)
 end)
 
-RegisterNetEvent('qb-storerobbery:server:removeLockpick', function()
-    local Player = QBCore.Functions.GetPlayer(source)
+RegisterNetEvent('qb-storerobbery:server:openSafe', function(index, combo)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    exports['qb-inventory']:RemoveItem(source, 'lockpick', 1, false, 'qb-storerobbery:server:removeLockpick')
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return
+    end
+    if not Safes[index] then
+        print(Lang:t('error.invalidSafe') .. tostring(index))
+        return
+    end
+
+    if not checkDistance(src, Safes[index].loc, 3.0) then
+        return
+    end
+
+    if Safes[index].robbed then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.safeRobbed'), 'error')
+        return
+    end
+
+    if safeCombos[index] ~= combo then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.wrongCode'), 'error')
+        return
+    end
+
+    local completed = QBCore.Functions.TriggerClientCallback('qb-storerobbery:client:openSafe', src)
+    if not completed then
+        return
+    end
+
+    Safes[index].robbed = true
+    safeCombos[index] = nil
+    GlobalState.StoreRobberySafes = Safes
+
+    Player.Functions.AddMoney('cash', math.random(SafeConfig.cashMin, SafeConfig.cashMax), "store-robbery")
+    coolDown('robSafe', index, SafeConfig.safeResetTime)
 end)
 
-CreateThread(function()
-    while true do
-        local toSend = {}
-        for k in ipairs(Config.Registers) do
-            if Config.Registers[k].time > 0 and (Config.Registers[k].time - Config.tickInterval) >= 0 then
-                Config.Registers[k].time = Config.Registers[k].time - Config.tickInterval
-            else
-                if Config.Registers[k].robbed then
-                    Config.Registers[k].time = 0
-                    Config.Registers[k].robbed = false
-                    toSend[#toSend + 1] = Config.Registers[k]
-                end
+
+local hitSafes = {}
+QBCore.Functions.CreateCallback('qb-storerobbery:server:canThermite', function(source, cb, index)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return false
+    end
+    if not Safes[index] then
+        print(Lang:t('error.invalidSafe') .. tostring(index))
+        return
+    end
+
+    if Safes[index].robbed then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.safeRobbed'), 'error')
+        return
+    end
+
+    if not checkDistance(src, Safes[index].loc, 3.0) then
+        return
+    end
+
+    if Player.Functions.RemoveItem('thermite', 1, false) then
+        TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['thermite'], "remove")
+        local thermiteTime = math.random(SafeConfig.thermiteCooldownTime.min * 1000, SafeConfig.thermiteCooldownTime.max * 1000)
+        hitSafes[index] = true
+        coolDown('thermiteCooldown', index, thermiteTime)
+        cb({bool = true, thermiteTime = thermiteTime})
+        return
+    end
+
+    cb({bool = false, thermiteTime = 10000000000000})
+end)
+
+RegisterNetEvent('qb-storerobbery:server:thermiteSafe', function(index)
+    local src = source
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return
+    end
+    if not checkDistance(src, Safes[index].loc, 3.0) then
+        return
+    end
+    if not Safes[index] then
+        print(Lang:t('error.invalidSafe') .. tostring(index))
+        return
+    end
+
+    if Safes[index].robbed then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.safeRobbed'), 'error')
+        return
+    end
+
+    if thermiteWait[index] then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.thermiteCooldown'), 'error')
+        return
+    end
+
+    if not hitSafes[index] then
+        print(Lang:t('error.notThermited') .. tostring(src))
+        return
+    end
+
+    hitSafes[index] = nil
+
+    Safes[index].thermited = true
+    GlobalState.StoreRobberySafes = Safes
+    coolDown('resetThermite', index, SafeConfig.resetThermite)
+end)
+
+RegisterNetEvent('qb-storerobbery:server:collectFromSafe', function(index)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return end
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return
+    end
+    if not Safes[index] then
+        print(Lang:t('error.invalidSafe') .. tostring(index))
+        return
+    end
+
+    if not checkDistance(src, Safes[index].loc, 3.0) then
+        return
+    end
+
+    if Safes[index].robbed then
+        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.safeRobbed'), 'error')
+        return
+    end
+
+    if not Safes[index].thermited then
+        print(Lang:t('error.notThermited') .. tostring(src))
+        return
+    end
+
+    local cash = math.random(SafeConfig.cashMin, SafeConfig.cashMax)
+    Player.Functions.AddMoney('cash', cash, "store-robbery")
+
+    Safes[index].thermited = false
+    Safes[index].robbed = true
+    GlobalState.StoreRobberySafes = Safes
+    coolDown('robSafe', index, SafeConfig.safeResetTime)
+end)
+
+RegisterNetEvent('qb-storerobbery:server:alertPolice', function()
+    local src = source
+
+    if PoliceCount <= Config.MinimumStoreRobberyPolice then
+        return
+    end
+
+    local coords = GetEntityCoords(GetPlayerPed(src))
+    TriggerClientEvent('qb-storerobbery:client:alertPolice', -1, coords)
+end)
+
+RegisterNetEvent('qb-storerobbery:server:busyRegister', function(index)
+    if not Registers[index] then
+        return
+    end
+    Registers[index].busy = not Registers[index].busy
+    GlobalState.StoreRobberyRegisters = Registers
+end)
+
+RegisterNetEvent('qb-storerobbery:server:busySafe', function(index)
+    if not Safes[index] then
+        return
+    end
+    Safes[index].busy = not Safes[index].busy
+    GlobalState.StoreRobberySafes = Safes
+end)
+
+RegisterNetEvent('qb-storerobbery:server:removeLockpick', function(register)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not checkDistance(src, Registers[register].loc, 5.0) then
+        local itemCount = Player.Functions.GetItemByName('lockpick')
+        local adv = Player.Functions.GetItemByName('advancedlockpick')
+        if itemCount and itemCount.amount > 0 then
+            Player.Functions.RemoveItem('lockpick', itemCount.amount)
+            TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['lockpick'], "remove")
+        end
+        if adv and adv.count > 0 then
+            Player.Functions.RemoveItem('advancedlockpick', adv.count)
+            TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['advancedlockpick'], "remove")
+        end
+    end
+    if Player.Functions.RemoveItem('lockpick', 1) then
+        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['lockpick'], "remove")
+        return
+    end
+    if Player.Functions.RemoveItem('advancedlockpick', 1) then
+        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['advancedlockpick'], "remove")
+        return
+    end
+end)
+
+QBCore.Functions.CreateCallback('qb-storerobbery:server:getPoliceCount', function(source, cb)
+    local policeCount = 0
+    for k, v in pairs(QBCore.Functions.GetPlayers()) do
+        local Player = QBCore.Functions.GetPlayer(v)
+        if Player then
+            local PlayerJob = Player.PlayerData.job
+            if (PlayerJob.name == 'police' or PlayerJob.type == 'leo') and PlayerJob.onduty then
+                policeCount = policeCount + 1
             end
         end
-
-        if #toSend > 0 then
-            --The false on the end of this is redundant
-            TriggerClientEvent('qb-storerobbery:client:setRegisterStatus', -1, toSend, false)
-        end
-
-        Wait(Config.tickInterval)
     end
-end)
-
-QBCore.Functions.CreateCallback('qb-storerobbery:server:isCombinationRight', function(_, cb, safe)
-    cb(SafeCodes[safe])
-end)
-
-QBCore.Functions.CreateCallback('qb-storerobbery:server:getPadlockCombination', function(_, cb, safe)
-    cb(SafeCodes[safe])
-end)
-
-QBCore.Functions.CreateCallback('qb-storerobbery:server:getRegisterStatus', function(_, cb)
-    cb(Config.Registers)
-end)
-
-QBCore.Functions.CreateCallback('qb-storerobbery:server:getSafeStatus', function(_, cb)
-    cb(Config.Safes)
+    PoliceCount = policeCount
+    cb(policeCount)
 end)

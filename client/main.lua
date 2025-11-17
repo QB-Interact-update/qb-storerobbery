@@ -1,444 +1,329 @@
-local QBCore = exports['qb-core']:GetCoreObject()
-local currentRegister = 0
-local currentSafe = 0
-local copsCalled = false
-local CurrentCops = 0
-local PlayerJob = {}
-local onDuty = false
-local usingAdvanced = false
 
-CreateThread(function()
-    Wait(1000)
-    if QBCore.Functions.GetPlayerData().job ~= nil and next(QBCore.Functions.GetPlayerData().job) then
-        PlayerJob = QBCore.Functions.GetPlayerData().job
+local function isDead()
+    local PlayerData = QBCore.Functions.GetPlayerData()
+    if PlayerData.metadata['isdead'] or PlayerData.metadata['inlaststand'] then
+        return true
     end
-end)
+    return false
+end
 
-CreateThread(function()
-    while true do
-        Wait(1000 * 60 * 5)
-        if copsCalled then
-            copsCalled = false
-        end
+local function isGovernment()
+    local PlayerData = QBCore.Functions.GetPlayerData()
+    if PlayerData.job.name == 'police' or PlayerData.job.name == 'ambulance' then
+        return true
     end
-end)
+    return false
+end
 
-CreateThread(function()
-    Wait(1000)
-    setupRegister()
-    setupSafes()
-    while true do
-        local ped = PlayerPedId()
-        local pos = GetEntityCoords(ped)
-        local inRange = false
-        for k in pairs(Config.Registers) do
-            local dist = #(pos - Config.Registers[k][1].xyz)
-            if dist <= 1 and Config.Registers[k].robbed then
-                inRange = true
-                DrawText3Ds(Config.Registers[k][1].xyz, Lang:t('text.the_cash_register_is_empty'))
-            end
-        end
-        if not inRange then
-            Wait(2000)
-        end
-        Wait(3)
+local function runRegisterChecks(k)
+    if not getPoliceCount() then
+        QBCore.Functions.Notify(Lang:t('error.not_enough_police') .. Config.MinimumStoreRobberyPolice, 'error')
+        return false
     end
-end)
-
-CreateThread(function()
-    while true do
-        Wait(1)
-        local inRange = false
-        if QBCore ~= nil then
-            local pos = GetEntityCoords(PlayerPedId())
-            for safe, _ in pairs(Config.Safes) do
-                local dist = #(pos - Config.Safes[safe][1].xyz)
-                if dist < 3 then
-                    inRange = true
-                    if dist < 1.0 then
-                        if not Config.Safes[safe].robbed then
-                            DrawText3Ds(Config.Safes[safe][1].xyz, Lang:t('text.try_combination'))
-                            if IsControlJustPressed(0, 38) then
-                                if CurrentCops >= Config.MinimumStoreRobberyPolice then
-                                    currentSafe = safe
-                                    if math.random(1, 100) <= 65 and not QBCore.Functions.IsWearingGloves() then
-                                        TriggerServerEvent('evidence:server:CreateFingerDrop', pos)
-                                    end
-                                    if math.random(100) <= 50 then
-                                        TriggerServerEvent('hud:server:GainStress', math.random(1, 3))
-                                    end
-                                    if Config.Safes[safe].type == 'keypad' then
-                                        SendNUIMessage({
-                                            action = 'openKeypad',
-                                        })
-                                        SetNuiFocus(true, true)
-                                    else
-                                        QBCore.Functions.TriggerCallback('qb-storerobbery:server:getPadlockCombination', function(combination)
-                                            TriggerEvent('SafeCracker:StartMinigame', combination)
-                                        end, safe)
-                                    end
-
-                                    if not copsCalled then
-                                        pos = GetEntityCoords(PlayerPedId())
-                                        local s1, s2 = GetStreetNameAtCoord(pos.x, pos.y, pos.z)
-                                        local street1 = GetStreetNameFromHashKey(s1)
-                                        local street2 = GetStreetNameFromHashKey(s2)
-                                        local streetLabel = street1
-                                        if street2 ~= nil then
-                                            streetLabel = streetLabel .. ' ' .. street2
-                                        end
-                                        TriggerServerEvent('qb-storerobbery:server:callCops', 'safe', currentSafe, streetLabel, pos)
-                                        copsCalled = true
-                                    end
-                                else
-                                    QBCore.Functions.Notify(Lang:t('error.minimum_store_robbery_police', { MinimumStoreRobberyPolice = Config.MinimumStoreRobberyPolice }), 'error')
-                                end
-                            end
-                        else
-                            DrawText3Ds(Config.Safes[safe][1].xyz, Lang:t('text.safe_opened'))
-                        end
-                    end
-                end
-            end
-        end
-
-        if not inRange then
-            Wait(2000)
-        end
+    local state = GlobalState.StoreRobberyRegisters[k]
+    if state.robbed or state.busy then
+        return false
     end
-end)
 
-RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
-    PlayerJob = QBCore.Functions.GetPlayerData().job
-    onDuty = true
-end)
-
-RegisterNetEvent('QBCore:Client:SetDuty', function(duty)
-    onDuty = duty
-end)
-
-RegisterNetEvent('QBCore:Client:OnJobUpdate', function(JobInfo)
-    PlayerJob = JobInfo
-    onDuty = true
-end)
-
-RegisterNetEvent('police:SetCopCount', function(amount)
-    CurrentCops = amount
-end)
-
-RegisterNetEvent('lockpicks:UseLockpick', function(isAdvanced)
-    usingAdvanced = isAdvanced
-    for k in pairs(Config.Registers) do
-        local ped = PlayerPedId()
-        local pos = GetEntityCoords(ped)
-        local dist = #(pos - Config.Registers[k][1].xyz)
-        if dist <= 1 and not Config.Registers[k].robbed then
-            if CurrentCops >= Config.MinimumStoreRobberyPolice then
-                if usingAdvanced then
-                    lockpick(true)
-                    currentRegister = k
-                    if not QBCore.Functions.IsWearingGloves() then
-                        TriggerServerEvent('evidence:server:CreateFingerDrop', pos)
-                    end
-                    if not copsCalled then
-                        local s1, s2 = GetStreetNameAtCoord(pos.x, pos.y, pos.z)
-                        local street1 = GetStreetNameFromHashKey(s1)
-                        local street2 = GetStreetNameFromHashKey(s2)
-                        local streetLabel = street1
-                        if street2 ~= nil then
-                            streetLabel = streetLabel .. ' ' .. street2
-                        end
-                        TriggerServerEvent('qb-storerobbery:server:callCops', 'cashier', currentRegister, streetLabel, pos)
-                        copsCalled = true
-                    end
-                else
-                    lockpick(true)
-                    currentRegister = k
-                    if not QBCore.Functions.IsWearingGloves() then
-                        TriggerServerEvent('evidence:server:CreateFingerDrop', pos)
-                    end
-                    if not copsCalled then
-                        local s1, s2 = GetStreetNameAtCoord(pos.x, pos.y, pos.z)
-                        local street1 = GetStreetNameFromHashKey(s1)
-                        local street2 = GetStreetNameFromHashKey(s2)
-                        local streetLabel = street1
-                        if street2 ~= nil then
-                            streetLabel = streetLabel .. ' ' .. street2
-                        end
-                        TriggerServerEvent('qb-storerobbery:server:callCops', 'cashier', currentRegister, streetLabel, pos)
-                        copsCalled = true
-                    end
-                end
-            else
-                QBCore.Functions.Notify(Lang:t('error.minimum_store_robbery_police', { MinimumStoreRobberyPolice = Config.MinimumStoreRobberyPolice }), 'error')
-            end
-        end
+    if isDead() then
+        return false
     end
-end)
 
-function setupRegister()
-    QBCore.Functions.TriggerCallback('qb-storerobbery:server:getRegisterStatus', function(Registers)
-        for k in pairs(Registers) do
-            Config.Registers[k].robbed = Registers[k].robbed
-        end
+    if isGovernment() then
+        return false
+    end
+    return true
+end
+
+local function runSafeChecks(k)
+    --if not getPoliceCount() then
+    --    --QBCore.Functions.Notify(Lang:t('error.not_enough_police') .. Config.MinimumStoreRobberyPolice, 'error')
+    --    return false
+    --end
+    local state = GlobalState.StoreRobberySafes[k]
+    if state.robbed or state.busy or state.thermited then
+        return false
+    end
+
+    if isDead() then
+        return false
+    end
+
+    if isGovernment() then
+        return false
+    end
+    return true
+end
+
+local function checkLockpicks()
+    if QBCore.Functions.HasItem('lockpick') or QBCore.Functions.HasItem('advancedlockpick') then
+        return true
+    end
+    return false
+end
+
+
+local function failRegister()
+    local lockPickChance = math.random(1, 100)
+    if lockPickChance <= 20 then
+        TriggerServerEvent('qb-storerobbery:server:removeAdvancedLockpick')
+    end
+    AlertPoliceRegister()
+end
+
+local function robRegister(Register)
+    if not getPoliceCount() then
+        QBCore.Functions.Notify(Lang:t('error.not_enough_police') .. Config.MinimumStoreRobberyPolice, 'error')
+        return false
+    end
+    boolBusyRegister(Register)
+    if not runRegisterChecks(Register) then
+        boolBusyRegister(Register)
+        return
+    end
+
+    if not checkLockpicks() then
+        QBCore.Functions.Notify(Lang:t('error.no_lockpick'), 'error')
+        boolBusyRegister(Register)
+        return false
+    end
+
+    local pass = exports['qb-minigames']:Lockpick(1)
+    if not pass then
+        boolBusyRegister(Register)
+        failRegister()
+        return
+    end
+
+    QBCore.Functions.Progressbar('rob_register', Lang:t('rob.register'), 4500, false, true, {
+        disableMovement = true,
+        disableCarMovement = true,
+        disableMouse = false,
+        disableCombat = true,
+    }, {
+        animDict = "mp_arresting",
+        anim = 'a_uncuff',
+        flags = 16,
+    }, {}, {}, function()
+        boolBusyRegister(Register)
+        TriggerServerEvent('qb-storerobbery:server:robRegister', Register)
+    end, function()
+        boolBusyRegister(Register)
+        QBCore.Functions.Notify(Lang:t('error.process_canceled'), 'error')
     end)
 end
 
-function setupSafes()
-    QBCore.Functions.TriggerCallback('qb-storerobbery:server:getSafeStatus', function(Safes)
-        for k in pairs(Safes) do
-            Config.Safes[k].robbed = Safes[k].robbed
-        end
-    end)
-end
-
-DrawText3Ds = function(coords, text)
-    SetTextScale(0.35, 0.35)
-    SetTextFont(4)
-    SetTextProportional(1)
-    SetTextColour(255, 255, 255, 215)
-    BeginTextCommandDisplayText('STRING')
-    SetTextCentre(true)
-    AddTextComponentSubstringPlayerName(text)
-    SetDrawOrigin(coords, 0)
-    EndTextCommandDisplayText(0.0, 0.0)
-    local factor = (string.len(text)) / 370
-    DrawRect(0.0, 0.0 + 0.0125, 0.017 + factor, 0.03, 0, 0, 0, 75)
-    ClearDrawOrigin()
-end
-
-function lockpick(bool)
-    SetNuiFocus(bool, bool)
-    SendNUIMessage({
-        action = 'ui',
-        toggle = bool,
+local function insertPassword(Register)
+    if not getPoliceCount() then
+        QBCore.Functions.Notify(Lang:t('error.not_enough_police') .. Config.MinimumStoreRobberyPolice, 'error')
+        return false
+    end
+    boolBusySafe(Register)
+    local input = exports['qb-input']:ShowInput({
+        header = Lang:t('inputSafe.header'),
+        submitText = Lang:t('inputSafe.submit'),
+        inputs = {
+            {
+                type = 'number',
+                isRequired = true,
+                name = 'combination',
+                text = 'Combination'
+            }
+        }
     })
-    SetCursorLocation(0.5, 0.2)
+    if type(input) ~= 'table' then boolBusySafe(Register) return end
+    boolBusySafe(Register)
+    TriggerServerEvent('qb-storerobbery:server:openSafe', Register, tonumber(input.combination))
 end
 
-function loadAnimDict(dict)
-    while (not HasAnimDictLoaded(dict)) do
-        RequestAnimDict(dict)
-        Wait(100)
+local function thermiteSafe(Safe,loc, rot)
+    if not getPoliceCount() then
+        QBCore.Functions.Notify(Lang:t('error.not_enough_police') .. Config.MinimumStoreRobberyPolice, 'error')
+        return false
     end
-end
-
-function takeAnim()
-    local ped = PlayerPedId()
-    while (not HasAnimDictLoaded('amb@prop_human_bum_bin@idle_b')) do
-        RequestAnimDict('amb@prop_human_bum_bin@idle_b')
-        Wait(100)
+    boolBusySafe(Safe)
+    if not QBCore.Functions.HasItem('thermite') then
+        boolBusySafe(Safe)
+        return
     end
-    TaskPlayAnim(ped, 'amb@prop_human_bum_bin@idle_b', 'idle_d', 8.0, 8.0, -1, 50, 0, false, false, false)
-    Wait(2500)
-    TaskPlayAnim(ped, 'amb@prop_human_bum_bin@idle_b', 'exit', 8.0, 8.0, -1, 50, 0, false, false, false)
-end
-
-local openingDoor = false
-
-RegisterNUICallback('success', function(_, cb)
-    if currentRegister ~= 0 then
-        lockpick(false)
-        TriggerServerEvent('qb-storerobbery:server:setRegisterStatus', currentRegister)
-        local lockpickTime = 25000
-        LockpickDoorAnim(lockpickTime)
-        QBCore.Functions.Progressbar('search_register', Lang:t('text.emptying_the_register'), lockpickTime, false, true, {
-            disableMovement = true,
-            disableCarMovement = true,
-            disableMouse = false,
-            disableCombat = true,
-        }, {
-            animDict = 'veh@break_in@0h@p_m_one@',
-            anim = 'low_force_entry_ds',
-            flags = 16,
-        }, {}, {}, function() -- Done
-            openingDoor = false
-            ClearPedTasks(PlayerPedId())
-            TriggerServerEvent('qb-storerobbery:server:takeMoney', currentRegister, true)
-        end, function() -- Cancel
-            openingDoor = false
-            ClearPedTasks(PlayerPedId())
-            QBCore.Functions.Notify(Lang:t('error.process_canceled'), 'error')
-            currentRegister = 0
-        end)
-        CreateThread(function()
-            while openingDoor do
-                TriggerServerEvent('hud:server:GainStress', math.random(1, 3))
-                Wait(10000)
-            end
-        end)
-    else
-        SendNUIMessage({
-            action = 'kekw',
-        })
+ 
+    local canThermite = QBCore.Functions.TriggerCallback('qb-storerobbery:server:canThermite', Safe)
+    if not canThermite then
+        boolBusySafe(Safe)
+        return
     end
-    cb('ok')
-end)
 
-function LockpickDoorAnim(time)
-    time = time / 1000
-    loadAnimDict('veh@break_in@0h@p_m_one@')
-    TaskPlayAnim(PlayerPedId(), 'veh@break_in@0h@p_m_one@', 'low_force_entry_ds', 3.0, 3.0, -1, 16, 0, false, false, false)
-    openingDoor = true
-    CreateThread(function()
-        while openingDoor do
-            TaskPlayAnim(PlayerPedId(), 'veh@break_in@0h@p_m_one@', 'low_force_entry_ds', 3.0, 3.0, -1, 16, 0, 0, 0, 0)
-            Wait(2000)
-            time = time - 2
-            TriggerServerEvent('qb-storerobbery:server:takeMoney', currentRegister, false)
-            if time <= 0 then
-                openingDoor = false
-                StopAnimTask(PlayerPedId(), 'veh@break_in@0h@p_m_one@', 'low_force_entry_ds', 1.0)
-            end
-        end
-        currentRegister = 0
+    requestModel('hei_prop_heist_thermite', 2000)
+    requestParticle('scr_ornate_heist')
+    local thermite = CreateObject('hei_prop_heist_thermite', vector3(loc.x, loc.y, loc.z), true, false, false)
+    FreezeEntityPosition(thermite, true)
+    SetEntityRotation(thermite, rot.x, rot.y, rot.z, 3, true )
+    QBCore.Functions.LookAtEntity(thermite, 1000, -1)
+
+    local finished = promise.new()
+    QBCore.Functions.Progressbar('plant_thermite', Lang:t('rob.plantThermite'), 5000, false, true, {
+        disableMovement = true,
+        disableCarMovement = true,
+        disableMouse = false,
+        disableCombat = true,
+    }, {
+        animDict = "anim@amb@clubhouse@tutorial@bkr_tut_ig3@",
+        anim = "machinic_loop_mechandplayer",
+    }, {}, {}, function()
+        finished:resolve(true)
+    end, function()
+        finished:resolve(false)
+        boolBusySafe(Safe)
+        QBCore.Functions.Notify(Lang:t('error.process_canceled'), 'error')
     end)
+
+    local progressBarComplete = Citizen.Await(finished)
+    finished = nil
+
+    if not progressBarComplete then
+        DeleteEntity(thermite)
+        return
+    end
+
+    Wait(1000)
+    dispatch()
+    local therm = StartParticleFxLoopedOnEntity('scr_heist_ornate_thermal_burn', thermite, 0.0, 1.4, 0.0, 0.0, 0.0, 0.0, 1.5, false, false, false)
+    Wait(canThermite.thermiteTime)
+    StopParticleFxLooped(therm, true)
+    DeleteEntity(thermite)
+    TriggerServerEvent('qb-storerobbery:server:thermiteSafe', Safe)
+    boolBusySafe(Safe)
 end
 
-RegisterNUICallback('callcops', function(_, cb)
-    TriggerEvent('police:SetCopAlert')
-    cb('ok')
-end)
-
-RegisterNetEvent('SafeCracker:EndMinigame', function(won)
-    if currentSafe ~= 0 then
-        if won then
-            if currentSafe ~= 0 then
-                if not Config.Safes[currentSafe].robbed then
-                    SetNuiFocus(false, false)
-                    TriggerServerEvent('qb-storerobbery:server:SafeReward', currentSafe)
-                    TriggerServerEvent('qb-storerobbery:server:setSafeStatus', currentSafe)
-                    currentSafe = 0
-                    takeAnim()
+local function initRegisters()
+    for k, v in pairs(GlobalState.StoreRobberyRegisters) do
+        local options = {
+            {
+                type = 'client',
+                icon = Lang:t('targets.robRegisterIcon'),
+                label = Lang:t('targets.robRegister'),
+                action = function()
+                    robRegister(k)
+                end,
+                canInteract = function()
+                    return runRegisterChecks(k)
                 end
-            else
-                SendNUIMessage({
-                    action = 'kekw',
-                })
-            end
-        end
-    end
-    copsCalled = false
-end)
-
-RegisterNUICallback('PadLockSuccess', function(_, cb)
-    if currentSafe ~= 0 then
-        if not Config.Safes[currentSafe].robbed then
-            SendNUIMessage({
-                action = 'kekw',
+            }
+        }
+        if Config.UseTarget then
+            exports['qb-target']:AddBoxZone('register_' .. k, v.loc, v.zones.length, v.zones.width, {
+                name = 'register_' .. k,
+                heading = 0,
+                debugPoly = false,
+                minZ = v.loc.z - 1,
+                maxZ = v.loc.z + 1,
+            }, {
+                options = options,
+                distance = 2.5,
+            })
+        else
+            exports['qb-interact']:addInteractZone({
+                name = 'srRegister'..k,
+                coords = v.loc,
+                length = v.zones.length,
+                width = v.zones.width,
+                height = 2.0,
+                heading = v.loc.w or 180.0,
+                debugPoly = true,
+                options = options,
             })
         end
-    else
-        SendNUIMessage({
-            action = 'kekw',
-        })
+    end 
+    for k, v in pairs(GlobalState.StoreRobberySafes) do
+        local options = {
+            {
+                type = 'client',
+                icon = Lang:t('targets.robSafeIcon'),
+                label = Lang:t('targets.robSafe'),
+                action = function()
+                    insertPassword(k)
+                end,
+                canInteract = function()
+                    return runSafeChecks(k)
+                end
+            },
+            {
+                icon = Lang:t('targets.thermiteSafeIcon'),
+                label = Lang:t('targets.thermiteSafe'),
+                item = 'thermite',
+                action = function()
+                    thermiteSafe(k, v.loc, v.rotation)
+                end,
+                canInteract = function()
+                    local state = GlobalState.StoreRobberySafes[k]
+                    if state.robbed or state.busy then
+                        return false
+                    end
+                    return runSafeChecks(k)
+                end
+            },
+            {
+                icon = Lang:t('targets.collectFromSafeIcon'),
+                label = Lang:t('targets.collectFromSafe'),
+                action = function()
+                    boolBusySafe(k)
+                    TriggerServerEvent('qb-storerobbery:server:collectFromSafe', k)
+                    boolBusySafe(k)
+                end,
+                canInteract = function()
+                    local state = GlobalState.StoreRobberySafes[k]
+                    if state.robbed or state.busy or not state.thermited then
+                        return false
+                    end
+                    return true
+                end
+            }
+        }
+        if Config.UseTarget then
+            exports['qb-target']:AddBoxZone('safe_' .. k, v.loc, 1.0, 1.0, {
+                name = 'safe_' .. k,
+                heading = 0,
+                debugPoly = false,
+                minZ = v.loc.z - 1,
+                maxZ = v.loc.z + 1,
+            }, {
+                options = options,
+                distance = 2.5,
+            })
+        else
+            exports['qb-interact']:addInteractZone({
+                name = 'srSafe'..k,
+                coords = v.loc,
+                length = v.zones.length,
+                width = v.zones.width,
+                height = 2.0,
+                heading = v.loc.w or 180.0,
+                debugPoly = true,
+                options = options,
+            })
+        end   
     end
-    cb('ok')
-end)
+end
 
-RegisterNUICallback('PadLockClose', function(_, cb)
-    SetNuiFocus(false, false)
-    copsCalled = false
-    cb('ok')
-end)
+initRegisters()
 
-RegisterNUICallback('CombinationFail', function(_, cb)
-    PlaySound(-1, 'Place_Prop_Fail', 'DLC_Dmod_Prop_Editor_Sounds', 0, 0, 1)
-    cb('ok')
-end)
-
-RegisterNUICallback('fail', function(_, cb)
-    if usingAdvanced then
-        if math.random(1, 100) < 20 then
-            TriggerServerEvent('qb-storerobbery:server:removeAdvancedLockpick')
-            TriggerEvent('qb-inventory:client:ItemBox', QBCore.Shared.Items['advancedlockpick'], 'remove')
-        end
-    else
-        if math.random(1, 100) < 40 then
-            TriggerServerEvent('qb-storerobbery:server:removeLockpick')
-            TriggerEvent('qb-inventory:client:ItemBox', QBCore.Shared.Items['lockpick'], 'remove')
-        end
-    end
-    if (not QBCore.Functions.IsWearingGloves() and math.random(1, 100) <= 25) then
-        local pos = GetEntityCoords(PlayerPedId())
-        TriggerServerEvent('evidence:server:CreateFingerDrop', pos)
-        QBCore.Functions.Notify(Lang:t('error.you_broke_the_lock_pick'))
-    end
-    lockpick(false)
-    cb('ok')
-end)
-
-RegisterNUICallback('exit', function(_, cb)
-    lockpick(false)
-    cb('ok')
-end)
-
-RegisterNUICallback('TryCombination', function(data, cb)
-    QBCore.Functions.TriggerCallback('qb-storerobbery:server:isCombinationRight', function(combination)
-        if tonumber(data.combination) ~= nil then
-            if tonumber(data.combination) == combination then
-                TriggerServerEvent('qb-storerobbery:server:SafeReward', currentSafe)
-                TriggerServerEvent('qb-storerobbery:server:setSafeStatus', currentSafe)
-                SetNuiFocus(false, false)
-                SendNUIMessage({
-                    action = 'closeKeypad',
-                    error = false,
-                })
-                currentSafe = 0
-                takeAnim()
-            else
-                TriggerEvent('police:SetCopAlert')
-                SetNuiFocus(false, false)
-                SendNUIMessage({
-                    action = 'closeKeypad',
-                    error = true,
-                })
-                currentSafe = 0
-            end
-        end
-        cb('ok')
-    end, currentSafe)
-end)
-
-RegisterNetEvent('qb-storerobbery:client:setRegisterStatus', function(batch, val)
-    -- Has to be a better way maybe like adding a unique id to identify the register
-    if (type(batch) ~= 'table') then
-        Config.Registers[batch] = val
-    else
-        for k in pairs(batch) do
-            Config.Registers[k] = batch[k]
-        end
-    end
-end)
-
-RegisterNetEvent('qb-storerobbery:client:setSafeStatus', function(safe, bool)
-    Config.Safes[safe].robbed = bool
-end)
-
-RegisterNetEvent('qb-storerobbery:client:robberyCall', function(_, _, _, coords)
-    if (PlayerJob.name == 'police' or PlayerJob.type == 'leo') and onDuty then
-        PlaySound(-1, 'Lose_1st', 'GTAO_FM_Events_Soundset', 0, 0, 1)
-        TriggerServerEvent('police:server:policeAlert', Lang:t('email.storerobbery_progress'))
-
-        local transG = 250
-        local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
-        SetBlipSprite(blip, 458)
-        SetBlipColour(blip, 1)
-        SetBlipDisplay(blip, 4)
-        SetBlipAlpha(blip, transG)
-        SetBlipScale(blip, 1.0)
-        BeginTextCommandSetBlipName('STRING')
-        AddTextComponentSubstringPlayerName(Lang:t('email.shop_robbery'))
-        EndTextCommandSetBlipName(blip)
-        while transG ~= 0 do
-            Wait(180 * 4)
-            transG = transG - 1
-            SetBlipAlpha(blip, transG)
-            if transG == 0 then
-                SetBlipSprite(blip, 2)
-                RemoveBlip(blip)
-                return
-            end
-        end
-    end
+QBCore.Functions.CreateClientCallback('qb-storerobbery:client:openSafe', function(cb)
+    local finished = promise.new()
+    QBCore.Functions.Progressbar('plant_thermite', Lang:t('text.unlocking'), 5000, false, true, {
+        disableMovement = true,
+        disableCarMovement = true,
+        disableMouse = false,
+        disableCombat = true,
+    }, {
+        animDict = "anim@amb@clubhouse@tutorial@bkr_tut_ig3@",
+        anim = "machinic_loop_mechandplayer",
+    }, {}, {}, function()
+        finished:resolve(true)
+        finished = nil
+    end, function()
+        finished:resolve(false)
+        finished = nil
+        QBCore.Functions.Notify(Lang:t('error.process_canceled'), 'error')
+    end)
+     cb(Citizen.Await(finished))
 end)
